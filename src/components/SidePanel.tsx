@@ -112,7 +112,7 @@ export const SidePanel: React.FC<SidePanelProps> = ({
         />
       )}
 
-      <div className="flex h-full select-none z-10 flex-shrink-0">
+      <div className="flex h-full select-none z-10 flex-shrink-0 no-print">
         {/* Expanded Side Panel Body */}
         {activeTab && (
           <div

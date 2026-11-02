@@ -350,7 +350,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-auto bg-neutral-200/90 dark:bg-neutral-950 p-2 sm:p-4 md:p-6 flex flex-col items-center justify-start select-none relative"
+      className="pdf-viewer-container flex-1 overflow-auto bg-neutral-200/90 dark:bg-neutral-950 p-2 sm:p-4 md:p-6 flex flex-col items-center justify-start select-none relative"
       style={{
         touchAction: 'pan-x pan-y',
         cursor:
@@ -367,7 +367,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
     >
       {/* Floating Zoom Feedback Badge for Pinch / Trackpad Gestures */}
       {showZoomIndicator && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-200 animate-in fade-in zoom-in-95">
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-200 animate-in fade-in zoom-in-95 no-print">
           <div className="px-4 py-1.5 rounded-full bg-neutral-900/90 dark:bg-neutral-800/95 text-white text-xs font-mono font-medium shadow-2xl backdrop-blur-md border border-neutral-700/60 dark:border-neutral-600/60 flex items-center space-x-2">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-neutral-300">Gesto de Pinça:</span>
@@ -376,7 +376,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
         </div>
       )}
       <div
-        className={`flex ${
+        className={`pdf-pages-wrapper flex ${
           viewMode === 'twoup' ? 'flex-row space-x-6' : 'flex-col space-y-8'
         } items-center justify-center`}
       >
@@ -443,19 +443,18 @@ const PageRenderItem: React.FC<PageRenderItemProps> = ({
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const pageContainerRef = React.useRef<HTMLDivElement>(null);
   const [renderSuccess, setRenderSuccess] = React.useState(false);
+  const [pageSize, setPageSize] = React.useState<{ width: number; height: number }>({ width: 595, height: 842 });
 
   // Dragging / Resizing state for Form Builder Mode
   const [draggingFieldId, setDraggingFieldId] = React.useState<string | null>(null);
   const [dragOffset, setDragOffset] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [resizingFieldId, setResizingFieldId] = React.useState<string | null>(null);
 
-  // Base A4 dimension
-  const baseWidth = 595;
-  const baseHeight = 842;
-  const displayWidth = Math.round(baseWidth * zoom);
-  const displayHeight = Math.round(baseHeight * zoom);
+  // Dynamic dimensions based on exact PDF page bounding box
+  const displayWidth = Math.round(pageSize.width * zoom);
+  const displayHeight = Math.round(pageSize.height * zoom);
 
-  // Render using pdfjs
+  // Render using pdfjs with high-DPI (Retina/mobile) super-sampling
   React.useEffect(() => {
     let isCancelled = false;
     let renderTask: any = null;
@@ -466,15 +465,32 @@ const PageRenderItem: React.FC<PageRenderItemProps> = ({
         const page = await pdfProxy.getPage(pageNum);
         if (isCancelled) return;
 
+        // Query real natural page size and aspect ratio
+        const unscaledViewport = page.getViewport({ scale: 1, rotation });
+        if (
+          Math.abs(unscaledViewport.width - pageSize.width) > 0.5 ||
+          Math.abs(unscaledViewport.height - pageSize.height) > 0.5
+        ) {
+          setPageSize({ width: unscaledViewport.width, height: unscaledViewport.height });
+        }
+
         const canvas = canvasRef.current;
-        const context = canvas.getContext('2d');
+        const context = canvas.getContext('2d', { alpha: false });
         if (!context) return;
 
-        const viewport = page.getViewport({ scale: zoom * 1.5, rotation });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.width = `${displayWidth}px`;
-        canvas.style.height = `${displayHeight}px`;
+        // Calculate high-resolution scale based on device pixel ratio
+        const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+        const effectiveDpr = Math.max(dpr, 1.75);
+        // Clamp scale: high enough for crisp fonts/images on mobile & retina, capped to prevent memory exhaustion
+        const renderScale = Math.min(Math.max(zoom * effectiveDpr, 2.0), 4.5);
+
+        const viewport = page.getViewport({ scale: renderScale, rotation });
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+
+        // Maximize anti-aliasing and image smoothing quality
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'high';
 
         const renderContext = {
           canvasContext: context,
@@ -503,7 +519,7 @@ const PageRenderItem: React.FC<PageRenderItemProps> = ({
         } catch (_) {}
       }
     };
-  }, [pdfProxy, pageNum, zoom, rotation, displayWidth, displayHeight]);
+  }, [pdfProxy, pageNum, zoom, rotation, pageSize.width, pageSize.height]);
 
   const pageAnnotations = document.annotations.filter((a) => a.page === pageNum);
   const pageFormFields = document.formFields.filter((f) => f.page === pageNum);
@@ -594,14 +610,14 @@ const PageRenderItem: React.FC<PageRenderItemProps> = ({
       onMouseDown={onMouseDown}
       onMouseMove={handlePageContainerMouseMove}
       onMouseUp={handlePageContainerMouseUp}
-      className="relative bg-white shadow-2xl rounded-sm border border-neutral-300 dark:border-neutral-800 flex-shrink-0 transition-transform overflow-hidden select-text"
+      className="pdf-page-container relative bg-white shadow-2xl rounded-sm border border-neutral-300 dark:border-neutral-800 flex-shrink-0 transition-transform overflow-hidden select-text"
     >
       {/* Real Canvas from PDF.js */}
       <canvas ref={canvasRef} className="absolute inset-0 block w-full h-full pointer-events-none" />
 
       {/* Fallback structured content if canvas is initializing */}
       {!renderSuccess && (
-        <div className="absolute inset-0 p-8 flex flex-col justify-between bg-white text-neutral-800">
+        <div className="absolute inset-0 p-8 flex flex-col justify-between bg-white text-neutral-800 no-print">
           <div>
             <div className="text-[#b70228] font-bold text-xl mb-1">
               {document.name} — Página {pageNum}

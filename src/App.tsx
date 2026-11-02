@@ -14,6 +14,7 @@ import { FindBar } from './components/FindBar';
 import { FormBuilderToolbar } from './components/FormBuilderToolbar';
 import { FormFieldInspector } from './components/FormFieldInspector';
 import { NewFormModal } from './components/NewFormModal';
+import { WelcomeScreen } from './components/WelcomeScreen';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import {
   ActiveTool,
@@ -92,25 +93,21 @@ export default function App() {
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Load default showcase PDF on start
-  React.useEffect(() => {
-    async function initShowcase() {
-      try {
-        const showcase = await createDefaultShowcasePdf();
-        if (typeof window !== 'undefined' && window.innerWidth < 640) {
-          showcase.zoom = 0.6;
-        }
-        setDocuments([showcase]);
-        setActiveDocId(showcase.id);
-        // Initial history point
-        setHistory([{ desc: 'Initial Open', docData: showcase.data, pageCount: showcase.pageCount }]);
-        setHistoryIndex(0);
-      } catch (err) {
-        console.error('Failed to initialize showcase PDF:', err);
+  // Optional sample document loader (on user request)
+  const handleLoadSampleDocument = async () => {
+    try {
+      const showcase = await createDefaultShowcasePdf();
+      if (typeof window !== 'undefined' && window.innerWidth < 640) {
+        showcase.zoom = 0.6;
       }
+      setDocuments([showcase]);
+      setActiveDocId(showcase.id);
+      setHistory([{ desc: 'Initial Open', docData: showcase.data, pageCount: showcase.pageCount }]);
+      setHistoryIndex(0);
+    } catch (err) {
+      console.error('Failed to load showcase PDF:', err);
     }
-    initShowcase();
-  }, []);
+  };
 
   // Sync dark class with document element
   React.useEffect(() => {
@@ -212,17 +209,21 @@ export default function App() {
     fileInputRef.current?.click();
   };
 
-  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const file = e.target.files[0];
+  const handleLoadFile = async (file: File) => {
     try {
       const doc = await loadPdfFromFile(file);
       setDocuments((prev) => [...prev, doc]);
       setActiveDocId(doc.id);
       pushHistory(`Open ${file.name}`, doc.data, doc.pageCount);
     } catch (err: any) {
-      alert(`Could not open PDF file: ${err.message || err}`);
+      alert(`Não foi possível abrir o arquivo PDF: ${err.message || err}`);
     }
+  };
+
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    await handleLoadFile(file);
     e.target.value = '';
   };
 
@@ -242,8 +243,71 @@ export default function App() {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrint = async () => {
+    if (!activeDoc) return;
+    try {
+      // 1. Bake any updated form fields into the PDF bytes
+      let pdfBytes = activeDoc.data;
+      if (activeDoc.formFields && activeDoc.formFields.length > 0) {
+        try {
+          pdfBytes = await bakeFormFieldsIntoPdf(activeDoc.data, activeDoc.formFields);
+        } catch (e) {
+          console.warn('Embed form fields warning before print:', e);
+        }
+      }
+
+      // 2. Create raw application/pdf Blob
+      const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
+      const blobUrl = URL.createObjectURL(blob);
+
+      const isMobile =
+        typeof navigator !== 'undefined' &&
+        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+      if (isMobile) {
+        // Mobile browsers (Android Print Spooler / iOS AirPrint):
+        // Hand the real vector PDF document blob directly to the OS print spooler/viewer
+        const win = window.open(blobUrl, '_blank');
+        if (!win) {
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      } else {
+        // Desktop: use hidden iframe pointing to real PDF document
+        const printIframe = document.createElement('iframe');
+        printIframe.style.position = 'fixed';
+        printIframe.style.right = '0';
+        printIframe.style.bottom = '0';
+        printIframe.style.width = '0';
+        printIframe.style.height = '0';
+        printIframe.style.border = '0';
+        printIframe.src = blobUrl;
+        document.body.appendChild(printIframe);
+
+        printIframe.onload = () => {
+          try {
+            printIframe.contentWindow?.focus();
+            printIframe.contentWindow?.print();
+          } catch (e) {
+            window.open(blobUrl, '_blank');
+          }
+          setTimeout(() => {
+            try {
+              document.body.removeChild(printIframe);
+              URL.revokeObjectURL(blobUrl);
+            } catch (_) {}
+          }, 60000);
+        };
+      }
+    } catch (err) {
+      console.error('Falha ao imprimir PDF:', err);
+      window.print();
+    }
   };
 
   // Organize Operations
@@ -914,9 +978,12 @@ export default function App() {
             </>
           )
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-neutral-400">
-            <p>No document open</p>
-          </div>
+          <WelcomeScreen
+            onOpenFile={handleOpenFileDialog}
+            onFileDrop={handleLoadFile}
+            onOpenNewFormModal={() => setIsNewFormModalOpen(true)}
+            onLoadSampleDoc={handleLoadSampleDocument}
+          />
         )}
 
         {/* Side Panel & Rail (Hidden in organize view and read mode) */}

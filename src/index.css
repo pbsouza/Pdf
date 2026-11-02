@@ -43,15 +43,82 @@ html, body {
 /* Crisp rendering */
 canvas {
   image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
+  image-rendering: auto;
+  text-rendering: optimizeLegibility;
 }
 
 @media print {
-  body {
-    background: white !important;
-    color: black !important;
+  @page {
+    size: auto;
+    margin: 0mm;
   }
-  .no-print {
+
+  html, body, #root, #root > div, main {
+    height: auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    overflow: visible !important;
+    position: static !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Completely hide app shell, headers, toolbars, sidebars, floating widgets, buttons */
+  header,
+  nav,
+  aside,
+  footer,
+  [role="toolbar"],
+  .no-print,
+  button,
+  .print-hide,
+  .zoom-indicator,
+  .lucide,
+  .fixed,
+  input,
+  select {
     display: none !important;
+  }
+
+  /* Make sure the viewer container doesn't constrain pages */
+  .pdf-viewer-container {
+    overflow: visible !important;
+    height: auto !important;
+    width: 100% !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .pdf-pages-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+    align-items: center !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Each page should print as its own separate page without shadow or border */
+  .pdf-page-container {
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 auto !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+    background: #ffffff !important;
+  }
+
+  .pdf-page-container canvas {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
   }
 }

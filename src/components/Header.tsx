@@ -60,7 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="h-11 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-2 sm:px-3 text-neutral-200 select-none z-30 flex-shrink-0">
+    <header className="h-11 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-2 sm:px-3 text-neutral-200 select-none z-30 flex-shrink-0 no-print">
       {/* Brand + Tab bar */}
       <div className="flex items-center space-x-2 overflow-x-auto h-full flex-1 mr-1 sm:mr-2 scrollbar-none">
         {/* PDFpb Brand Logo */}

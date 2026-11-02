@@ -115,7 +115,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     : [...baseZoomPercentages, roundedZoomPct].sort((a, b) => a - b);
 
   return (
-    <div className="h-12 bg-neutral-100 dark:bg-neutral-850 border-b border-neutral-300 dark:border-neutral-800 flex items-center justify-between px-3 text-neutral-700 dark:text-neutral-200 text-xs select-none z-20 flex-shrink-0 overflow-x-auto shadow-sm">
+    <div className="h-12 bg-neutral-100 dark:bg-neutral-850 border-b border-neutral-300 dark:border-neutral-800 flex items-center justify-between px-3 text-neutral-700 dark:text-neutral-200 text-xs select-none z-20 flex-shrink-0 overflow-x-auto shadow-sm no-print">
       {/* Group 1: File & History */}
       <div className="flex items-center space-x-1 flex-shrink-0">
         <button
