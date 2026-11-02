@@ -108,7 +108,11 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     }
   };
 
-  const zoomPercentages = [50, 75, 100, 125, 150, 200, 300];
+  const roundedZoomPct = Math.round(zoom * 100);
+  const baseZoomPercentages = [30, 50, 75, 100, 125, 150, 200, 300];
+  const zoomPercentages = baseZoomPercentages.includes(roundedZoomPct)
+    ? baseZoomPercentages
+    : [...baseZoomPercentages, roundedZoomPct].sort((a, b) => a - b);
 
   return (
     <div className="h-12 bg-neutral-100 dark:bg-neutral-850 border-b border-neutral-300 dark:border-neutral-800 flex items-center justify-between px-3 text-neutral-700 dark:text-neutral-200 text-xs select-none z-20 flex-shrink-0 overflow-x-auto shadow-sm">
@@ -229,7 +233,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <div className="h-5 w-px bg-neutral-300 dark:bg-neutral-700 mx-1" />
 
         <button
-          onClick={() => onZoomChange(Math.max(0.5, zoom - 0.25))}
+          onClick={() => onZoomChange(Math.max(0.3, Math.round((zoom - 0.25) * 100) / 100))}
           className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700"
           title="Diminuir zoom"
         >
@@ -249,7 +253,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </select>
 
         <button
-          onClick={() => onZoomChange(Math.min(3.0, zoom + 0.25))}
+          onClick={() => onZoomChange(Math.min(3.5, Math.round((zoom + 0.25) * 100) / 100))}
           className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700"
           title="Aumentar zoom"
         >

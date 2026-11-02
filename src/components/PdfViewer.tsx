@@ -15,6 +15,7 @@ interface PdfViewerProps {
   currentPage: number;
   onPageChange: (page: number) => void;
   zoom: number;
+  onZoomChange?: (zoom: number) => void;
   viewMode: ViewMode;
   activeTool: ActiveTool;
   onAddAnnotation: (annotation: AnnotationItem) => void;
@@ -36,6 +37,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   currentPage,
   onPageChange,
   zoom,
+  onZoomChange,
   viewMode,
   activeTool,
   onAddAnnotation,
@@ -56,6 +58,129 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
   const [drawPoints, setDrawPoints] = React.useState<Array<{ x: number; y: number }>>([]);
   const [dragStart, setDragStart] = React.useState<{ x: number; y: number } | null>(null);
   const [dragCurrent, setDragCurrent] = React.useState<{ x: number; y: number } | null>(null);
+
+  // Multi-touch Pinch to Zoom & Trackpad gesture state
+  const [isPinching, setIsPinching] = React.useState(false);
+  const [showZoomIndicator, setShowZoomIndicator] = React.useState(false);
+  const initialPinchDistRef = React.useRef<number | null>(null);
+  const initialZoomRef = React.useRef<number>(zoom);
+  const currentZoomRef = React.useRef<number>(zoom);
+  const hideIndicatorTimerRef = React.useRef<any>(null);
+
+  React.useEffect(() => {
+    currentZoomRef.current = zoom;
+  }, [zoom]);
+
+  // Attach non-passive touch listeners on container for reliable pinch-to-zoom
+  React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // Prevent native viewport zoom so only the PDF pages scale
+        e.preventDefault();
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+        initialPinchDistRef.current = dist;
+        initialZoomRef.current = currentZoomRef.current;
+        setIsPinching(true);
+        setShowZoomIndicator(true);
+        if (hideIndicatorTimerRef.current) {
+          clearTimeout(hideIndicatorTimerRef.current);
+        }
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && initialPinchDistRef.current && initialPinchDistRef.current > 10) {
+        e.preventDefault();
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+        const scale = dist / initialPinchDistRef.current;
+        const targetZoom = Math.min(3.5, Math.max(0.3, Math.round(initialZoomRef.current * scale * 100) / 100));
+
+        if (Math.abs(targetZoom - currentZoomRef.current) >= 0.02) {
+          const oldZoom = currentZoomRef.current;
+          onZoomChange?.(targetZoom);
+
+          if (oldZoom > 0) {
+            const containerRect = container.getBoundingClientRect();
+            const focalX = (t0.clientX + t1.clientX) / 2 - containerRect.left;
+            const focalY = (t0.clientY + t1.clientY) / 2 - containerRect.top;
+            const ratio = targetZoom / oldZoom;
+
+            container.scrollLeft = (container.scrollLeft + focalX) * ratio - focalX;
+            container.scrollTop = (container.scrollTop + focalY) * ratio - focalY;
+          }
+        }
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        initialPinchDistRef.current = null;
+        setIsPinching(false);
+        if (hideIndicatorTimerRef.current) {
+          clearTimeout(hideIndicatorTimerRef.current);
+        }
+        hideIndicatorTimerRef.current = setTimeout(() => {
+          setShowZoomIndicator(false);
+        }, 1200);
+      }
+    };
+
+    // Trackpad pinch-to-zoom (wheel with ctrlKey/metaKey)
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        setShowZoomIndicator(true);
+        if (hideIndicatorTimerRef.current) {
+          clearTimeout(hideIndicatorTimerRef.current);
+        }
+        hideIndicatorTimerRef.current = setTimeout(() => {
+          setShowZoomIndicator(false);
+        }, 1200);
+
+        const zoomStep = -e.deltaY * 0.005;
+        const targetZoom = Math.min(3.5, Math.max(0.3, Math.round((currentZoomRef.current + zoomStep) * 100) / 100));
+
+        if (Math.abs(targetZoom - currentZoomRef.current) >= 0.01) {
+          const oldZoom = currentZoomRef.current;
+          onZoomChange?.(targetZoom);
+
+          if (oldZoom > 0) {
+            const containerRect = container.getBoundingClientRect();
+            const focalX = e.clientX - containerRect.left;
+            const focalY = e.clientY - containerRect.top;
+            const ratio = targetZoom / oldZoom;
+
+            container.scrollLeft = (container.scrollLeft + focalX) * ratio - focalX;
+            container.scrollTop = (container.scrollTop + focalY) * ratio - focalY;
+          }
+        }
+      }
+    };
+
+    container.addEventListener('touchstart', onTouchStart, { passive: false });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd, { passive: false });
+    container.addEventListener('touchcancel', onTouchEnd, { passive: false });
+    container.addEventListener('wheel', onWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('touchend', onTouchEnd);
+      container.removeEventListener('touchcancel', onTouchEnd);
+      container.removeEventListener('wheel', onWheel);
+      if (hideIndicatorTimerRef.current) {
+        clearTimeout(hideIndicatorTimerRef.current);
+      }
+    };
+  }, [onZoomChange]);
 
   // Load PDF with pdfjsLib
   React.useEffect(() => {
@@ -227,6 +352,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
       onScroll={handleScroll}
       className="flex-1 overflow-auto bg-neutral-200/90 dark:bg-neutral-950 p-2 sm:p-4 md:p-6 flex flex-col items-center justify-start select-none relative"
       style={{
+        touchAction: 'pan-x pan-y',
         cursor:
           pendingFieldType
             ? 'crosshair'
@@ -239,6 +365,16 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({
             : 'default',
       }}
     >
+      {/* Floating Zoom Feedback Badge for Pinch / Trackpad Gestures */}
+      {showZoomIndicator && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-200 animate-in fade-in zoom-in-95">
+          <div className="px-4 py-1.5 rounded-full bg-neutral-900/90 dark:bg-neutral-800/95 text-white text-xs font-mono font-medium shadow-2xl backdrop-blur-md border border-neutral-700/60 dark:border-neutral-600/60 flex items-center space-x-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-neutral-300">Gesto de Pinça:</span>
+            <span className="font-semibold text-white">{Math.round(zoom * 100)}%</span>
+          </div>
+        </div>
+      )}
       <div
         className={`flex ${
           viewMode === 'twoup' ? 'flex-row space-x-6' : 'flex-col space-y-8'
@@ -322,6 +458,7 @@ const PageRenderItem: React.FC<PageRenderItemProps> = ({
   // Render using pdfjs
   React.useEffect(() => {
     let isCancelled = false;
+    let renderTask: any = null;
 
     async function renderPage() {
       if (!pdfProxy || !canvasRef.current) return;
@@ -344,12 +481,15 @@ const PageRenderItem: React.FC<PageRenderItemProps> = ({
           viewport,
         };
 
-        await page.render(renderContext).promise;
+        renderTask = page.render(renderContext);
+        await renderTask.promise;
         if (!isCancelled) {
           setRenderSuccess(true);
         }
-      } catch (err) {
-        console.warn('Canvas render fallback used for page', pageNum);
+      } catch (err: any) {
+        if (err?.name !== 'RenderingCancelledException') {
+          console.warn('Canvas render fallback used for page', pageNum);
+        }
       }
     }
 
@@ -357,6 +497,11 @@ const PageRenderItem: React.FC<PageRenderItemProps> = ({
 
     return () => {
       isCancelled = true;
+      if (renderTask) {
+        try {
+          renderTask.cancel();
+        } catch (_) {}
+      }
     };
   }, [pdfProxy, pageNum, zoom, rotation, displayWidth, displayHeight]);
 

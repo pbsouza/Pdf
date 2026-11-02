@@ -885,6 +885,7 @@ export default function App() {
                 currentPage={activeDoc.currentPage}
                 onPageChange={(p) => updateActiveDoc({ currentPage: p })}
                 zoom={activeDoc.zoom}
+                onZoomChange={(z) => updateActiveDoc({ zoom: z })}
                 viewMode={viewMode}
                 activeTool={activeTool}
                 onAddAnnotation={handleAddAnnotation}
