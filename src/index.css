@@ -77,9 +77,26 @@ canvas {
   .zoom-indicator,
   .lucide,
   .fixed,
-  input,
-  select {
+  header input,
+  [role="toolbar"] input,
+  header select,
+  [role="toolbar"] select {
     display: none !important;
+  }
+
+  /* Form fields inside the PDF page MUST remain visible */
+  .pdf-page-container input,
+  .pdf-page-container textarea,
+  .pdf-page-container select {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  /* Annotations, stamps, drawings, highlights inside page container */
+  .pdf-page-container * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   /* Make sure the viewer container doesn't constrain pages */

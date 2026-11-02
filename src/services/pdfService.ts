@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import {
   BookmarkItem,
   CommentItem,
+  AnnotationItem,
   FormFieldItem,
   LayerItem,
   AttachmentItem,
@@ -1312,93 +1313,354 @@ export async function createNewBlankDocument(
 }
 
 /**
+ * Safely parses CSS hex color to pdf-lib rgb Color object
+ */
+function parseHexColor(hexStr?: string, defaultColor = rgb(0.718, 0.008, 0.157)) {
+  if (!hexStr || typeof hexStr !== 'string' || !hexStr.startsWith('#')) {
+    return defaultColor;
+  }
+  let h = hexStr.replace('#', '').trim();
+  if (h.length === 3) {
+    h = h.split('').map((c) => c + c).join('');
+  }
+  if (h.length !== 6) {
+    return defaultColor;
+  }
+  const r = parseInt(h.substring(0, 2), 16) / 255;
+  const g = parseInt(h.substring(2, 4), 16) / 255;
+  const b = parseInt(h.substring(4, 6), 16) / 255;
+  return rgb(
+    isNaN(r) ? 0 : Math.max(0, Math.min(1, r)),
+    isNaN(g) ? 0 : Math.max(0, Math.min(1, g)),
+    isNaN(b) ? 0 : Math.max(0, Math.min(1, b))
+  );
+}
+
+/**
+ * Strips or replaces characters outside Latin-1 / WinAnsi to avoid font encoding errors
+ */
+function sanitizeForStandardFont(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/—/g, '-')
+    .replace(/–/g, '-')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/•/g, '*')
+    .replace(/…/g, '...')
+    .replace(/[^\x20-\x7E\xA0-\xFF\n\r\t]/g, '');
+}
+
+/**
+ * Bakes ALL user modifications (drawings, highlights, stamps, text notes, signatures,
+ * redactions, comments, and interactive form fields) directly into the PDF byte stream.
+ * This guarantees they are permanently saved to disk and rendered by all PDF viewers and print spoolers.
+ */
+export async function bakeAllChangesIntoPdf(
+  docBytes: Uint8Array,
+  annotations: AnnotationItem[] = [],
+  formFields: FormFieldItem[] = [],
+  comments: CommentItem[] = []
+): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.load(docBytes);
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+  const numPages = pdfDoc.getPageCount();
+
+  // 1. Bake Annotations (Drawings, Highlights, Stamps, Redactions, Text notes, Rectangles)
+  for (const ann of annotations) {
+    const pageIndex = Math.max(0, Math.min(ann.page - 1, numPages - 1));
+    const page = pdfDoc.getPage(pageIndex);
+    const { width: pW, height: pH } = page.getSize();
+
+    if (ann.type === 'highlight' && ann.rect) {
+      const x = (ann.rect.x / 100) * pW;
+      const y = pH - ((ann.rect.y + ann.rect.height) / 100) * pH;
+      const w = (ann.rect.width / 100) * pW;
+      const h = (ann.rect.height / 100) * pH;
+      const col = parseHexColor(ann.color, rgb(0.99, 0.88, 0.28));
+
+      page.drawRectangle({
+        x,
+        y,
+        width: w,
+        height: h,
+        color: col,
+        opacity: ann.opacity ?? 0.45,
+      });
+    } else if (ann.type === 'redact' && ann.rect) {
+      const x = (ann.rect.x / 100) * pW;
+      const y = pH - ((ann.rect.y + ann.rect.height) / 100) * pH;
+      const w = (ann.rect.width / 100) * pW;
+      const h = (ann.rect.height / 100) * pH;
+
+      page.drawRectangle({
+        x,
+        y,
+        width: w,
+        height: h,
+        color: rgb(0, 0, 0),
+        opacity: 1,
+      });
+
+      if (w >= 35 && h >= 10) {
+        const label = 'CENSURADO';
+        const fontSize = Math.max(6, Math.min(h * 0.45, 9));
+        const textWidth = helveticaBold.widthOfTextAtSize(label, fontSize);
+        page.drawText(label, {
+          x: x + Math.max(2, (w - textWidth) / 2),
+          y: y + (h - fontSize) / 2,
+          size: fontSize,
+          font: helveticaBold,
+          color: rgb(0.5, 0.5, 0.5),
+        });
+      }
+    } else if (ann.type === 'stamp' && ann.rect) {
+      const x = (ann.rect.x / 100) * pW;
+      const y = pH - ((ann.rect.y + ann.rect.height) / 100) * pH;
+      const w = (ann.rect.width / 100) * pW;
+      const h = (ann.rect.height / 100) * pH;
+      const stampCol = parseHexColor(ann.color, rgb(0.718, 0.008, 0.157));
+
+      const stampLabelMap: Record<string, string> = {
+        APPROVED: 'APROVADO',
+        DRAFT: 'RASCUNHO',
+        CONFIDENTIAL: 'CONFIDENCIAL',
+        REVIEWED: 'REVISADO',
+        VOID: 'ANULADO',
+      };
+      const rawLabel = ann.stampType ? (stampLabelMap[ann.stampType] || ann.stampType) : 'APROVADO';
+      const label = sanitizeForStandardFont(rawLabel);
+
+      // Outer border box with semi-opaque white fill
+      page.drawRectangle({
+        x,
+        y,
+        width: w,
+        height: h,
+        color: rgb(1, 1, 1),
+        opacity: 0.9,
+        borderColor: stampCol,
+        borderWidth: 2,
+      });
+
+      // Inner double border
+      if (w > 8 && h > 8) {
+        page.drawRectangle({
+          x: x + 2,
+          y: y + 2,
+          width: w - 4,
+          height: h - 4,
+          borderColor: stampCol,
+          borderWidth: 0.75,
+        });
+      }
+
+      const fontSize = Math.max(7, Math.min(h * 0.45, 13));
+      const textWidth = helveticaBold.widthOfTextAtSize(label, fontSize);
+      page.drawText(label, {
+        x: x + Math.max(2, (w - textWidth) / 2),
+        y: y + (h - fontSize) / 2 + 1,
+        size: fontSize,
+        font: helveticaBold,
+        color: stampCol,
+      });
+    } else if (ann.type === 'text' && ann.rect) {
+      const x = (ann.rect.x / 100) * pW;
+      const y = pH - ((ann.rect.y + ann.rect.height) / 100) * pH;
+      const w = (ann.rect.width / 100) * pW;
+      const h = (ann.rect.height / 100) * pH;
+      const textCol = parseHexColor(ann.color, rgb(0.12, 0.16, 0.23));
+      const safeText = sanitizeForStandardFont(ann.text || '');
+
+      const fontSize = 10;
+      const measuredW = helvetica.widthOfTextAtSize(safeText, fontSize);
+      const boxW = Math.max(w, measuredW + 12);
+      const boxH = Math.max(h, fontSize + 8);
+
+      page.drawRectangle({
+        x,
+        y: y - Math.max(0, boxH - h),
+        width: boxW,
+        height: boxH,
+        color: rgb(1, 1, 1),
+        borderColor: rgb(0.75, 0.75, 0.75),
+        borderWidth: 0.75,
+        opacity: 0.96,
+      });
+
+      page.drawText(safeText, {
+        x: x + 4,
+        y: y - Math.max(0, boxH - h) + 4,
+        size: fontSize,
+        font: helvetica,
+        color: textCol,
+      });
+    } else if (ann.type === 'draw' && ann.points && ann.points.length > 1) {
+      const drawCol = parseHexColor(ann.color, rgb(0.718, 0.008, 0.157));
+      const thickness = ann.strokeWidth ? Math.max(1, ann.strokeWidth * 0.75) : 2.5;
+
+      for (let i = 0; i < ann.points.length - 1; i++) {
+        const p1 = ann.points[i];
+        const p2 = ann.points[i + 1];
+
+        const startX = (p1.x / 100) * pW;
+        const startY = pH - (p1.y / 100) * pH;
+        const endX = (p2.x / 100) * pW;
+        const endY = pH - (p2.y / 100) * pH;
+
+        page.drawLine({
+          start: { x: startX, y: startY },
+          end: { x: endX, y: endY },
+          thickness,
+          color: drawCol,
+          opacity: 1,
+        });
+      }
+    } else if (ann.type === 'rect' && ann.rect) {
+      const x = (ann.rect.x / 100) * pW;
+      const y = pH - ((ann.rect.y + ann.rect.height) / 100) * pH;
+      const w = (ann.rect.width / 100) * pW;
+      const h = (ann.rect.height / 100) * pH;
+      const strokeCol = parseHexColor(ann.color, rgb(0.718, 0.008, 0.157));
+
+      page.drawRectangle({
+        x,
+        y,
+        width: w,
+        height: h,
+        borderColor: strokeCol,
+        borderWidth: ann.strokeWidth || 2,
+        opacity: ann.opacity ?? 1,
+      });
+    }
+  }
+
+  // 2. Bake Comments as subtle notes on page
+  if (comments && comments.length > 0) {
+    for (const comm of comments) {
+      const pageIndex = Math.max(0, Math.min(comm.page - 1, numPages - 1));
+      const page = pdfDoc.getPage(pageIndex);
+      const { width: pW, height: pH } = page.getSize();
+      const pos = comm.position || { x: 8, y: 8 };
+
+      const cX = (pos.x / 100) * pW;
+      const cY = pH - (pos.y / 100) * pH;
+
+      page.drawRectangle({
+        x: cX,
+        y: cY - 14,
+        width: 14,
+        height: 14,
+        color: rgb(0.99, 0.88, 0.28),
+        borderColor: rgb(0.85, 0.75, 0.1),
+        borderWidth: 1,
+      });
+
+      page.drawText('N', {
+        x: cX + 3.5,
+        y: cY - 11,
+        size: 9,
+        font: helveticaBold,
+        color: rgb(0.3, 0.25, 0.05),
+      });
+    }
+  }
+
+  // 3. Bake Form Fields (Native AcroForm & filled values)
+  if (formFields && formFields.length > 0) {
+    const form = pdfDoc.getForm();
+
+    for (const field of formFields) {
+      const pageIndex = Math.max(0, Math.min(field.page - 1, numPages - 1));
+      const page = pdfDoc.getPage(pageIndex);
+      const { width: pW, height: pH } = page.getSize();
+
+      const x = (field.rect.x / 100) * pW;
+      const y = pH - ((field.rect.y + field.rect.height) / 100) * pH;
+      const width = (field.rect.width / 100) * pW;
+      const height = (field.rect.height / 100) * pH;
+
+      try {
+        if (field.type === 'text' || field.type === 'date') {
+          let tf: any;
+          try {
+            tf = form.getTextField(field.name);
+          } catch {
+            tf = form.createTextField(field.name);
+            tf.addToPage(page, { x, y, width, height });
+          }
+          if (typeof field.value === 'string' && field.value) {
+            tf.setText(sanitizeForStandardFont(field.value));
+          }
+        } else if (field.type === 'textarea') {
+          let tf: any;
+          try {
+            tf = form.getTextField(field.name);
+          } catch {
+            tf = form.createTextField(field.name);
+            tf.enableMultiline();
+            tf.addToPage(page, { x, y, width, height });
+          }
+          if (typeof field.value === 'string' && field.value) {
+            tf.setText(sanitizeForStandardFont(field.value));
+          }
+        } else if (field.type === 'checkbox') {
+          let cb: any;
+          try {
+            cb = form.getCheckBox(field.name);
+          } catch {
+            cb = form.createCheckBox(field.name);
+            cb.addToPage(page, { x, y, width, height });
+          }
+          if (field.value === true) {
+            cb.check();
+          } else {
+            cb.uncheck();
+          }
+        } else if (field.type === 'dropdown') {
+          let dd: any;
+          try {
+            dd = form.getDropdown(field.name);
+          } catch {
+            dd = form.createDropdown(field.name);
+            if (field.options && field.options.length > 0) {
+              dd.setOptions(field.options.map(sanitizeForStandardFont));
+            }
+            dd.addToPage(page, { x, y, width, height });
+          }
+          if (typeof field.value === 'string' && field.value) {
+            dd.select(sanitizeForStandardFont(field.value));
+          }
+        } else if (field.type === 'signature') {
+          let sf: any;
+          try {
+            sf = form.getTextField(field.name);
+          } catch {
+            sf = form.createTextField(field.name);
+            sf.addToPage(page, { x, y, width, height });
+          }
+          if (typeof field.value === 'string' && field.value) {
+            sf.setText(sanitizeForStandardFont(field.value));
+          }
+        }
+      } catch (e) {
+        console.warn(`AcroForm field binding notice for ${field.name}:`, e);
+      }
+    }
+  }
+
+  return await pdfDoc.save();
+}
+
+/**
  * Embeds actual native AcroForm fields into any PDF bytes
  */
 export async function bakeFormFieldsIntoPdf(
   docBytes: Uint8Array,
   fields: FormFieldItem[]
 ): Promise<Uint8Array> {
-  const pdfDoc = await PDFDocument.load(docBytes);
-  const form = pdfDoc.getForm();
-
-  for (const field of fields) {
-    const pageIndex = Math.max(0, Math.min(field.page - 1, pdfDoc.getPageCount() - 1));
-    const page = pdfDoc.getPage(pageIndex);
-    const { width: pW, height: pH } = page.getSize();
-
-    const x = (field.rect.x / 100) * pW;
-    const y = pH - ((field.rect.y + field.rect.height) / 100) * pH;
-    const width = (field.rect.width / 100) * pW;
-    const height = (field.rect.height / 100) * pH;
-
-    try {
-      if (field.type === 'text' || field.type === 'date') {
-        let tf: any;
-        try {
-          tf = form.getTextField(field.name);
-        } catch {
-          tf = form.createTextField(field.name);
-          tf.addToPage(page, { x, y, width, height });
-        }
-        if (typeof field.value === 'string' && field.value) {
-          tf.setText(field.value);
-        }
-      } else if (field.type === 'textarea') {
-        let tf: any;
-        try {
-          tf = form.getTextField(field.name);
-        } catch {
-          tf = form.createTextField(field.name);
-          tf.enableMultiline();
-          tf.addToPage(page, { x, y, width, height });
-        }
-        if (typeof field.value === 'string' && field.value) {
-          tf.setText(field.value);
-        }
-      } else if (field.type === 'checkbox') {
-        let cb: any;
-        try {
-          cb = form.getCheckBox(field.name);
-        } catch {
-          cb = form.createCheckBox(field.name);
-          cb.addToPage(page, { x, y, width, height });
-        }
-        if (field.value === true) {
-          cb.check();
-        } else {
-          cb.uncheck();
-        }
-      } else if (field.type === 'dropdown') {
-        let dd: any;
-        try {
-          dd = form.getDropdown(field.name);
-        } catch {
-          dd = form.createDropdown(field.name);
-          if (field.options && field.options.length > 0) {
-            dd.setOptions(field.options);
-          }
-          dd.addToPage(page, { x, y, width, height });
-        }
-        if (typeof field.value === 'string' && field.value) {
-          dd.select(field.value);
-        }
-      } else if (field.type === 'signature') {
-        let sf: any;
-        try {
-          sf = form.getTextField(field.name);
-        } catch {
-          sf = form.createTextField(field.name);
-          sf.addToPage(page, { x, y, width, height });
-        }
-        if (typeof field.value === 'string' && field.value) {
-          sf.setText(field.value);
-        }
-      }
-    } catch (e) {
-      console.warn(`AcroForm field binding notice for ${field.name}:`, e);
-    }
-  }
-
-  return await pdfDoc.save();
+  return bakeAllChangesIntoPdf(docBytes, [], fields, []);
 }
 

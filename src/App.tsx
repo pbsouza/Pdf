@@ -38,6 +38,7 @@ import {
   extractPdfPages,
   downloadPdfBytes,
   bakeFormFieldsIntoPdf,
+  bakeAllChangesIntoPdf,
 } from './services/pdfService';
 import {
   Grid,
@@ -230,14 +231,24 @@ export default function App() {
   const handleSaveFile = async () => {
     if (!activeDoc) return;
     try {
-      let finalBytes = activeDoc.data;
-      if (activeDoc.formFields && activeDoc.formFields.length > 0) {
-        finalBytes = await bakeFormFieldsIntoPdf(activeDoc.data, activeDoc.formFields);
-      }
+      // Bake ALL user markings (drawings, highlights, stamps, text, redactions)
+      // and interactive form fields permanently into the PDF file
+      const finalBytes = await bakeAllChangesIntoPdf(
+        activeDoc.data,
+        activeDoc.annotations,
+        activeDoc.formFields,
+        activeDoc.comments
+      );
       downloadPdfBytes(finalBytes, activeDoc.name);
-      updateActiveDoc({ data: finalBytes, isDirty: false });
+      // The annotations are now permanently baked into the PDF bytes
+      updateActiveDoc({
+        data: finalBytes,
+        annotations: [],
+        isDirty: false,
+      });
+      pushHistory(`Salvar alterações em ${activeDoc.name}`, finalBytes, activeDoc.pageCount);
     } catch (err: any) {
-      console.warn('Fallback direto de download de PDF:', err);
+      console.warn('Erro ao embutir alterações no PDF:', err);
       downloadPdfBytes(activeDoc.data, activeDoc.name);
       updateActiveDoc({ isDirty: false });
     }
@@ -246,17 +257,21 @@ export default function App() {
   const handlePrint = async () => {
     if (!activeDoc) return;
     try {
-      // 1. Bake any updated form fields into the PDF bytes
+      // 1. Bake ALL annotations (stamps, drawings, text notes, highlights, redactions)
+      // and interactive form fields into the PDF bytes for the printer spooler
       let pdfBytes = activeDoc.data;
-      if (activeDoc.formFields && activeDoc.formFields.length > 0) {
-        try {
-          pdfBytes = await bakeFormFieldsIntoPdf(activeDoc.data, activeDoc.formFields);
-        } catch (e) {
-          console.warn('Embed form fields warning before print:', e);
-        }
+      try {
+        pdfBytes = await bakeAllChangesIntoPdf(
+          activeDoc.data,
+          activeDoc.annotations,
+          activeDoc.formFields,
+          activeDoc.comments
+        );
+      } catch (e) {
+        console.warn('Embed all changes warning before print:', e);
       }
 
-      // 2. Create raw application/pdf Blob
+      // 2. Create raw application/pdf Blob with all markings
       const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
       const blobUrl = URL.createObjectURL(blob);
 
@@ -395,12 +410,25 @@ export default function App() {
   const handleExtractPages = async (pages: number[]) => {
     if (!activeDoc) return;
     try {
-      const extractedBytes = await extractPdfPages(activeDoc.data, pages);
+      let sourceBytes = activeDoc.data;
+      if (activeDoc.annotations.length > 0 || activeDoc.formFields.length > 0) {
+        try {
+          sourceBytes = await bakeAllChangesIntoPdf(
+            activeDoc.data,
+            activeDoc.annotations,
+            activeDoc.formFields,
+            activeDoc.comments
+          );
+        } catch (e) {
+          console.warn('Notice baking annotations for extract:', e);
+        }
+      }
+      const extractedBytes = await extractPdfPages(sourceBytes, pages);
       const extractedName = `${activeDoc.name.replace(/\.pdf$/i, '')}_extracted.pdf`;
       downloadPdfBytes(extractedBytes, extractedName);
-      alert(`Extracted ${pages.length} page(s) and downloaded as "${extractedName}"!`);
+      alert(`Extraídas ${pages.length} página(s) com todas as anotações salvas em "${extractedName}"!`);
     } catch (err: any) {
-      alert(`Extract error: ${err.message || err}`);
+      alert(`Erro ao extrair páginas: ${err.message || err}`);
     }
   };
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Scissors, Download, FileText } from 'lucide-react';
-import { splitPdf, downloadPdfBytes } from '../services/pdfService';
+import { splitPdf, downloadPdfBytes, bakeAllChangesIntoPdf } from '../services/pdfService';
 import { PdfDocument } from '../types/pdf';
 
 interface SplitModalProps {
@@ -31,8 +31,22 @@ export const SplitModal: React.FC<SplitModalProps> = ({
   const handleSplit = async () => {
     setIsProcessing(true);
     try {
+      let sourceBytes = document.data;
+      if (document.annotations.length > 0 || document.formFields.length > 0) {
+        try {
+          sourceBytes = await bakeAllChangesIntoPdf(
+            document.data,
+            document.annotations,
+            document.formFields,
+            document.comments
+          );
+        } catch (e) {
+          console.warn('Notice baking annotations for split:', e);
+        }
+      }
+
       const parts = await splitPdf(
-        document.data,
+        sourceBytes,
         splitMode,
         splitMode === 'every' ? everyN : selectedPages
       );

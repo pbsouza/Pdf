@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, FilePlus, Trash2, ArrowUp, ArrowDown, Upload } from 'lucide-react';
-import { combinePdfFiles, downloadPdfBytes } from '../services/pdfService';
+import { combinePdfFiles, downloadPdfBytes, bakeAllChangesIntoPdf } from '../services/pdfService';
 import { PdfDocument } from '../types/pdf';
 
 interface CombineModalProps {
@@ -26,15 +26,31 @@ export const CombineModal: React.FC<CombineModalProps> = ({
   const [isProcessing, setIsProcessing] = React.useState(false);
 
   React.useEffect(() => {
-    if (isOpen && currentDoc) {
-      setFiles([
-        {
-          id: 'current-doc',
-          name: currentDoc.name,
-          bytes: currentDoc.data,
-        },
-      ]);
+    async function initCurrentDoc() {
+      if (isOpen && currentDoc) {
+        let currentBytes = currentDoc.data;
+        if (currentDoc.annotations.length > 0 || currentDoc.formFields.length > 0) {
+          try {
+            currentBytes = await bakeAllChangesIntoPdf(
+              currentDoc.data,
+              currentDoc.annotations,
+              currentDoc.formFields,
+              currentDoc.comments
+            );
+          } catch (e) {
+            console.warn('Notice baking annotations for combine:', e);
+          }
+        }
+        setFiles([
+          {
+            id: 'current-doc',
+            name: currentDoc.name,
+            bytes: currentBytes,
+          },
+        ]);
+      }
     }
+    initCurrentDoc();
   }, [isOpen, currentDoc]);
 
   if (!isOpen) return null;
