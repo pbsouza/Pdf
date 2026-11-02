@@ -1,0 +1,8 @@
+{
+  "name": "PdfCraft",
+  "description": "The PDF workbench; an open-source, modern PDF reader and editor. Read, organize, combine, split, annotate, fill forms, and protect PDFs.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

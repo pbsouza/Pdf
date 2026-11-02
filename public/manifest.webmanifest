@@ -1,0 +1,32 @@
+{
+  "id": "./",
+  "name": "PDFpb - Editor & Formulários PDF",
+  "short_name": "PDFpb",
+  "description": "Editor de PDF moderno e criador de formulários interativos direto no navegador.",
+  "theme_color": "#b70228",
+  "background_color": "#19191c",
+  "display": "standalone",
+  "orientation": "any",
+  "start_url": "./",
+  "scope": "./",
+  "icons": [
+    {
+      "src": "pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
